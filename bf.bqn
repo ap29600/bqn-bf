@@ -92,7 +92,7 @@ count ← 1↓/⁼+`split
 # TODO: validate that the brackets are balanced.
 begins‿ends ← "[]"=¨<type
 depth ← +`begins-»ends
-forward‿back ← (↕∘≠⋈⊢) begins ⊒○(⊏⟜depth)○/ ends
+forward‿back ← (↕∘≠⋈⊢) begins ⊒○(/⟜depth) ends
 
 # Dispatch on the type of the instruction, calling the appropriate codegen
 # function with the run-length as 𝕩. The jumps will result in "" and are
