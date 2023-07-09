@@ -64,6 +64,7 @@ Right ← {"    add rsi, "∾•Fmt𝕩}
 
 read ← Unlines⟨
   "    mov rax, 0"
+  "    mov BYTE [rsi], al"
   "    mov rdi, 0"
   "    mov rdx, 1"
   "    syscall"
