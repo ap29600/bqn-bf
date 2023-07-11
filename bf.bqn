@@ -134,8 +134,8 @@ wbegins‿wends ← /¨begins‿ends ← "[]"=¨<type
 depth ← +`begins»⊸-ends
 
 forward‿back ← (⊢⋈↕∘≠) ends ⊒○(/⟜depth) begins
-wbegins ↩ back⊏wbegins
-wends   ↩ forward⊏wends
+wbegins  ↩ back⊏wbegins
+wends    ↩ forward⊏wends
 metadata ← forward⌾(begins⊸/) back⌾(ends⊸/) count
 
 ###### Loop unrolling
