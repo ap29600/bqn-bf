@@ -205,7 +205,7 @@ GetInt   ← {
 GetBool  ← {
   i←⊑⟨"no","off","0","yes","on","1"⟩⊐<o←(•Fmt𝕨)GetStr 𝕩
   ("Expected boolean argument for option `"∾𝕩∾"`")!6≥i
-  i>3
+  i≥3
 }
 
 "Exactly one source file should be provided" ! 1=≠filenames
