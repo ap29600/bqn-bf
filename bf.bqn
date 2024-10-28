@@ -2,7 +2,7 @@
 
 Merge ← {(⍋⍋𝕨)⊏∾((≠𝕩)↑/⁼𝕨)⥊¨𝕩}
 
-Header ← {
+GenHeader ← {
   𝕊size:
   n‿s ← •Fmt¨8‿1×⌈size÷8
 "section .text
@@ -45,12 +45,8 @@ BckJmp ← {
 loopend"⊸∾¨f∾¨<":
 "
 }
-Plus ← {
-"    add BYTE[rsi], "⊸∾¨(•Fmt¨ 256|𝕩)∾¨<"
-"
-}
-Left ←  ("    sub rsi, "∾•Fmt∾(@+10)˙)¨
-Right ← ("    add rsi, "∾•Fmt∾(@+10)˙)¨
+Add ← {"    add BYTE [rsi], "⊸∾¨(•Fmt¨ 256|𝕩)∾¨@+10}
+Move ← {((𝕩≥0)⊏⟨"    sub rsi, ","    add rsi, "⟩)∾¨(•Fmt¨|𝕩)∾¨@+10}
 read ← "    mov BYTE [rsi], dl
     mov rax, 0
     mov rdi, 0
@@ -84,27 +80,12 @@ funcend"⊸∾¨f∾¨<":
 }
 Call ← {
 f ← •Fmt¨𝕩
-"    call funcbegin"⊸∾¨f∾¨<"
-"
+"    call funcbegin"⊸∾¨f∾¨(@+10)
 }
 
-# we interpret the loop to find the increments and decrements on variables,
-# then we find the modular pseudo-inverse of the loop counter's increment.
-# TODO: make this operate on `type` to disentangle from
-#       begins and ends.
-Unroll ← {type‿info‿label:
-  off ← +`info×-˝"><"=⌜type
-  sum ← 256|info×-˝"+-"=⌜type
-  # normalize increments. 0 will come first.
-  uoff←⍷0∾(sum≠0)/off
-  usum←(uoff=⌜off) +´∘/⎉1 sum
-  decrement ← -⊏usum
-  uoff 1⊸↓↩
-  usum 1⊸↓↩
-  # the largest power of two dividing the increment.
-  # we introduce an assertion that the initial value of the cell is
-  # divisible by this value, otherwise we can just halt the program.
-
+Mul ← {id‿[offset, increment]:
+  decrement ← -(offset⊐0)⊏increment∾0
+  offset‿increment (0≠offset)⊸/¨↩
   pow2 ← ⊑(⌽2⋆↕9)(⊣/˜0=|)decrement
   modulus ← 256÷pow2
   inverse ← ⊑/pow2=○(256⊸|)decrement×↕modulus
@@ -116,10 +97,10 @@ Unroll ← {type‿info‿label:
     shr cl, "∾(•Fmt 2⋆⁼pow2)∾"
     mov BYTE[rsi], 0
 "
-    (0=≠off)⊑⟨
+    (0=≠offset)⊑⟨
 "    mov cl, BYTE[rsi]
     test cl, cl
-    jz unroll"∾(•Fmt label)∾"
+    jz multiply"∾(•Fmt id)∾"
     mov BYTE[rsi], 0
 ",
 "    mov BYTE[rsi], 0
@@ -139,90 +120,97 @@ Unroll ← {type‿info‿label:
     add "∾mem∾", al
 "
     ⟩
-  }¨´ uoff‿usum
-
-  result ∾↩ "unroll"∾(•Fmt label)∾":
+  }¨´ offset‿increment
+  result∾"multiply"∾(•Fmt id)∾":
 "
-  result
 }
 
-Compile ⇐ {
-  ###### Parsing
+Compile ⇐ { memory‿use_mul‿deinline 𝕊 𝕩:
   # Run-length encoding of the instructions: "+-<>" are joined.
   input ← ∊⟜"+-<>,.[]"⊸/𝕩
   split ← (≠⟜» ∨ ¬∘∊⟜"+-<>")input
   type  ← split/input
-  info ← 1↓/⁼+`split
+  info  ← 1↓/⁼+`split
+	# normalize -1 to +256
+  info (256|-)⌾((type='-')⊸/) ↩
+  type '+'¨⌾((type='-')⊸/) ↩
+	# normalize <1 to >¯1
+  info -⌾((type='<')⊸/) ↩
+  type '>'¨⌾((type='<')⊸/) ↩
 
-  # To generate matching IDs for the forward and backward jumps, we first compute
-  # a depth vector. For any given depth, the closing brace of a pair always
-  # occurs before any other closing brace at the same depth. This means that the
-  # '⊒' primitive gives the index in 'ends' of the brace that closes the scope which
-  # each element in 'begin' opens.
-  begins‿ends ← /¨begin_mask‿end_mask ← "[]"=¨<type
-  depth ← +`begin_mask»⊸-end_mask
-  "Unmatched braces in source file"! (begins =○≠ ends) ∧ 0=⌊´depth
-  matching ← begins ⍋⊸⊏○(⍋⊏⟜depth) ends
-
-  #### Lift loops to function
+  # match brackets
   {
-    loop_id ← ⊐˜begins {𝕨↓¨𝕩↑¨type‿info}¨ 1+matching⊏ends
-    candidates ← (¬matching=ends⍋begins)∧(2=⊒loop_id)∧0<begins-˜matching⊏ends
-    first ← (≠begins)↑/⁼candidates/loop_id
-    call ← first<loop_id⊏first>begins⊏+`-´(≠type)↑¨/⁼¨(loop_id⊏first)⊸/¨1+begins⋈matching⊏ends
-    move_mask ← 0<+`-´(≠type)↑¨/⁼¨call⊸/¨1+begins⋈matching⊏ends
-    _r ← {𝕩⌾(𝕗⊸⊏)𝕨}
-    type‿info (first/begins)_r¨↩ ⟨'f'¨, first/loop_id⟩
-    type‿info (first/matching⊏ends)_r¨↩ ⟨'r'¨, first/loop_id⟩
-    type‿info (call/begins)_r¨↩ ⟨'c'¨, call/loop_id⟩
-    type‿info (/move_mask)_r¨↩ ⟨' '¨,0¨⟩
-
-    kill ← first∨call∨begins⊏«move_mask
-    begins (¬kill)⊸/↩
-    ends ((⍋matching)⊏¬kill)⊸/↩
-    matching ↩ matching ⊏ ¯1+`(⍋matching)⊏¬kill
-    matching (¬kill)⊸/↩
+    begins‿ends ← /¨begin_mask‿end_mask ← "[]"=¨<type
+    depth ← +`begin_mask»⊸-end_mask
+    "Unmatched braces in source file"! (begins =○≠ ends) ∧ 0=⌊´depth
+    matching ← begins ⍋⊸⊏○(⍋⊏⟜depth) ends
+    info {𝕩⌾((begins∾matching⊏ends)⊸⊏)𝕨}↩ ∾˜↕≠begins
   }
 
-  ###### Loop unrolling
-  # Find the deepest nested braces for loop unrolling. These are the ones where
-  # the closest closing brace on the right is the same as the matching brace.
-  leaf_indices ← /matching=ends⍋begins
-  leaf_bodies ← begins {(1+𝕨)↓¨𝕩↑¨type‿info}¨○(leaf_indices⊸⊏) matching⊏ends
+  {𝕩⋄# Lift loops to functions
+     # a call is denoted by ⟨'c', function_id⟩
+    begins‿ends ← /¨"[]"=¨<type
+    ends↩(⍋ begins ⍋○(⊏⟜info) ends)⊏ends
 
-  unrollable ← {t‿c: (¬∨´⥊",."=⌜t) ∧ 0=+´c×-˝"><"=⌜t }¨leaf_bodies
-  unroll_begins‿unroll_ends ← (unrollable/leaf_indices)⊸⊏¨begins‿(matching⊏ends)
-  unroll_mask ← ¬(≠type)↑/⁼∾1+unroll_begins+↕¨unroll_ends-unroll_begins
+		ti ← type⋈info×¬type∊"[]"
+    loop_id ← ⊐˜begins {(1+𝕨)↓¨𝕩↑¨ti}¨ ends
+    candidates ← (↕∘≠⊸≠¯1+begins⍋ends)∧(1=⊒loop_id)∧5<ends-begins
+    first ← (≠begins)↑/⁼candidates/loop_id
+    call ← first<loop_id⊏first>begins⊏+`-´(≠type)↑¨/⁼¨(loop_id⊏first)⊸/¨1+begins⋈ends
+    del_mask ← 0<+`⥊-´(≠type)↑¨/⁼¨call⊸/¨1+begins⋈ends
+    pos ← (⥊first/begins∾˘ends)∾call/begins
+    new_type ← ("fr"⥊˜2×+´first)∾'c'⥊˜+´call
+    new_info ← (2/first/loop_id)∾call/loop_id
+    type‿info {𝕩⌾(pos⊸⊏)𝕨}¨↩ new_type‿new_info
+    type‿info (¬del_mask)⊸/¨↩
+  }⍟deinline @
 
-  leftover_loop_starts ← ¬∘unrollable⌾(leaf_indices⊸⊏)(≠begins)⥊1
-  leftover_loop_ends   ← (⍋matching)⊏leftover_loop_starts
+  {𝕩⋄# Unroll loops to multiplication
+     # an unrolled loop is denoted by ⟨'u', [positions, increments] ⟩
+    begins‿ends ← /¨"[]"=¨<type
+    ends↩(⍋ begins ⍋○(⊏⟜info) ends)⊏ends
 
-  type ↩ 'u'¨⌾(unroll_begins⊸⊏) type
-  info‿type ↩ info‿type/˜¨< unroll_mask
-  ###### Code generation
-  instructions ← ⟨
-    Plus  ('+'=type)/info
-    Plus∘-('-'=type)/info
-    Left  ('<'=type)/info
-    Right ('>'=type)/info
-    <read
-    <write
-    FwdJmp leftover_loop_starts/matching
-    BckJmp leftover_loop_ends/↕≠begins
-    Call  ('c'=type)/info
-    Func  ('f'=type)/info
-    Return('r'=type)/info
-    Unroll¨ unrollable/leaf_bodies∾¨leaf_indices
-    <""
-  ⟩
+    indices ← /↕∘≠⊸=¯1+begins⍋ends
+		ti ← type‿info
+    loop_types‿loop_infos ← (⊣´¨⋈⊢´¨)begins {(1+𝕨)↓¨𝕩↑¨ti}¨○(indices⊸⊏) ends
+    pure   ← ∧´∘∊⟜"+>"¨loop_types              # loops that don't perform IO or call functions
+    static ← 0=+´¨loop_infos/¨˜'>'=¨loop_types # loops that start and end on the same cell
+    indices‿loop_types‿loop_infos (pure∧static)⊸/¨↩
 
-  output ← ∾("+-<>,.[]cfru "⊐type) Merge instructions
-  (Header 𝕨)∾output∾footer
+    del_mask ← 0<+`⥊-´(≠type)↑¨/⁼¨indices⊸⊏¨1+begins⋈ends
+    pos ← indices⊏begins
+    new_type ← '*'⥊˜≠indices
+    new_info ← indices⋈¨loop_types {(w/j)≍˜(⌊´c)+/w←0≠j←256|+´¨(i⊏𝕩)⊔˜c-⌊´c←(i←/'+'=𝕨)⊏+`𝕩×'>'=𝕨}¨ loop_infos
+    type‿info {𝕩⌾(pos⊸⊏)𝕨}¨↩ new_type‿new_info
+    type‿info (¬del_mask)⊸/¨↩
+  }⍟use_mul @
+
+  # Code generation
+  d ← ⟨Add,Move,<read,<write,FwdJmp,BckJmp,Call,Func,Return,Mul¨,<""⟩
+  t ← "+>,.[]cfr*"
+  instructions ← d {𝕎 𝕩}¨(1+≠t)↑info⊔˜t⊐type
+  output ← ∾(t⊐type) Merge instructions
+  (GenHeader memory)∾output∾footer
 }
 
 filenames‿options ← 2↑(('-'=⊑¨)⊔⊢) •args
 keys‿values ← (⊐⟜':'¨(↑¨⋈+⟜1⊸↓¨)⊢) 1↓¨options
-GetOpt ← {⊑(keys⊐<𝕩)⊏(<𝕨)∾˜values}
-ParseInt←0 10⊸×⊸+˜´⌽-'0'˙
+GetStr   ← {⊑(keys⊐<𝕩)⊏values∾<𝕨}
+ParseInt ← 0 10⊸×⊸+˜´⌽-'0'˙
+GetInt   ← {
+  o←(•Fmt𝕨) GetStr 𝕩
+  ("Expected number argument for option `"∾𝕩∾"`")!(×≠o)∧∧´1="0:"⍋o
+  ParseInt o
+}
+GetBool  ← {
+  i←⊑⟨"no","off","0","yes","on","1"⟩⊐<o←(•Fmt𝕨)GetStr 𝕩
+  ("Expected boolean argument for option `"∾𝕩∾"`")!6≥i
+  i>3
+}
+
 "Exactly one source file should be provided" ! 1=≠filenames
-("/dev/stdout" GetOpt "out") •file.Bytes (ParseInt "30000" GetOpt "memory") Compile •file.Bytes ⊑ filenames
+out_file ← "/dev/stdout" GetStr "out"
+memory   ← 30000 GetInt  "memory"
+use_mul  ← 1     GetBool "use-mul"
+deinline ← 1     GetBool "deinline"
+out_file •file.Bytes memory‿use_mul‿deinline Compile •file.Bytes ⊑ filenames
